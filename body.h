@@ -12,29 +12,31 @@ struct vec2 { float x, y; };
 typedef struct _cairo cairo_t;
 
 enum {
-	BF_VALID = 1,
+	BF_SIMULATE = 1,
+	BF_ALLOCATED = 2,
+	BF_TRAIL = 4,
 };
 
 struct body {
 	struct vec2 p;
 	struct vec2 v;
-	struct vec2 prior_p;
 	float mass;
 	int flags;
 
 	float r, g, b;
 	float radius;
 	struct {
-		size_t cursor;
+		size_t end;
+		size_t start;
 		size_t size;
-		size_t capacity;
 		struct vec2 * points;
 	} trail;
 };
 
-void body_init(struct body * b, float mass, float x, float y);
+void body_init(struct body * b, float mass, float x, float y, float vx, float vy);
 void body_recalc(struct body * b);
 void body_trail(struct body * body, struct vec2 const* point);
+void body_trail_reset(struct body * body);
 void body_merge(struct body * b, struct body * q);
 
 struct galaxy {
@@ -42,10 +44,13 @@ struct galaxy {
 	size_t bodies_size;
 };
 
-void galaxy_init(struct galaxy * galaxy, size_t n, double w, double h);
+#define GALAXY_INIT {NULL, 0}
+
 struct body * galaxy_body_add(struct galaxy * galaxy);
+void galaxy_body_remove(struct galaxy * galaxy, struct body * b);
 void galaxy_integrate(struct galaxy * galaxy, double delta);
 void galaxy_render(cairo_t * ctx, struct galaxy * galaxy);
 void galaxy_render_trails(cairo_t * ctx, struct galaxy * galaxy);
+struct body * galaxy_body_get(struct galaxy * galaxy, float x, float y);
 
 #endif

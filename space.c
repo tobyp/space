@@ -54,8 +54,7 @@ cairo_surface_t * surface_paths;
 cairo_t * ctx;
 cairo_t * ctx_paths;
 size_t speed_scale = 1;
-const size_t bodies_size_init = 100;
-struct galaxy galaxy = {NULL, 0};
+struct galaxy galaxy = GALAXY_INIT;
 
 enum {
 	FLAG_SIMULATE = 1,
@@ -67,12 +66,12 @@ int flags;
 enum {
 	MODE_IDLE,
 	MODE_HOLD,
-	MODE_HOLD_VELOCITY,
-	MODE_HOLD_MASS,
 };
-int mode = MODE_IDLE;
 
-struct body * held_body;
+int mode = MODE_IDLE;
+struct body * held_body = NULL;
+
+double rnd() { return (double)rand() / RAND_MAX; }
 
 static void gl_debug_message(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, GLchar const* message, void const* userParam);
 static void glfw_error(int error, char const* message);
@@ -105,7 +104,7 @@ void glfw_key(GLFWwindow * window, int key, int scancode, int action, int mods) 
 				double x, y;
 				glfwGetCursorPos(window, &x, &y);
 				held_body = galaxy_body_add(&galaxy);
-				body_init(held_body, 1000.0, x, y);
+				body_init(held_body, 1000.0, x, y, 0, 0);
 				mode = MODE_HOLD;
 			}
 		}
@@ -122,59 +121,81 @@ void glfw_key(GLFWwindow * window, int key, int scancode, int action, int mods) 
 			}
 		}
 		else if (key == GLFW_KEY_R) {
-			galaxy_init(&galaxy, bodies_size_init, width, height);
+			size_t n = 1;
+			if (mods & GLFW_MOD_CONTROL) {
+				n *= 10;
+			}
+			if (mode & GLFW_MOD_ALT) {
+				n *= 10;
+			}
+			for (size_t i=0; i<n; ++i) {
+				struct body * b = galaxy_body_add(&galaxy);
+				body_init(b, rnd() * 1000.0, rnd() * width, rnd() * height, (rnd() - 0.5) * 2.0, (rnd() - 0.5) * 2.0);
+			}
 		}
-		else if (key == GLFW_KEY_UP) {
-			speed_scale++;
+		else if (key == GLFW_KEY_T) {
+			if (mode == MODE_HOLD) {
+				held_body->flags ^= BF_TRAIL;
+			}
+		}
+		else if (key == GLFW_KEY_X) {
+			if (mode == MODE_HOLD) {
+				galaxy_body_remove(&galaxy, held_body);
+				mode = MODE_IDLE;
+			}
+		}
+	}
+	else if (action == GLFW_PRESS || action == GLFW_RELEASE) {
+		if (key == GLFW_KEY_UP) {
+			if (!(flags & FLAG_SIMULATE)) flags |= FLAG_SIMULATE;
+			else speed_scale++;
 		}
 		else if (key == GLFW_KEY_DOWN) {
-			if (speed_scale) speed_scale--;
+			if (speed_scale > 1) speed_scale--;
+			else if (speed_scale == 1) flags &= ~FLAG_SIMULATE;
 		}
 	}
 }
 
 void glfw_mouse_button(GLFWwindow * window, int button, int action, int mods) {
-	if (action == GLFW_PRESS) {
-		if (mode == MODE_HOLD) {
-			if (mods & GLFW_MOD_CONTROL) {
-				mode = MODE_HOLD_MASS;
+	if (action == GLFW_RELEASE) {
+		if (mode == MODE_IDLE) {
+			double x, y;
+			glfwGetCursorPos(window, &x, &y);
+			held_body = galaxy_body_get(&galaxy, x, y);
+			if (held_body != NULL) {
+				held_body->flags &= ~BF_SIMULATE;
 			}
 			else {
-				mode = MODE_HOLD_VELOCITY;
+				held_body = galaxy_body_add(&galaxy);
+				body_init(held_body, 1000.0, x, y, 0, 0);
 			}
+			mode = MODE_HOLD;
 		}
-	}
-	else if (action == GLFW_RELEASE) {
-	{
-		if (mode == MODE_HOLD || mode == MODE_HOLD_VELOCITY) {
-			held_body->flags |= BF_VALID;
+		else if (mode == MODE_HOLD) {
+			held_body->flags |= BF_SIMULATE;
 			held_body = NULL;
 			mode = MODE_IDLE;
 		}
-		else if (mode == MODE_HOLD_VELOCITY || mode == MODE_HOLD_MASS) {
-			mode = MODE_HOLD;
-		}
 	}
-}
 }
 
 void glfw_cursor_pos(GLFWwindow * window, double x, double y) {
 	if (mode == MODE_HOLD) {
-		held_body->p.x = x;
-		held_body->p.y = y;
-	}
-	else if (mode == MODE_HOLD_VELOCITY) {
-		held_body->v.x = x - held_body->p.x;
-		held_body->v.y = y - held_body->p.y;
-	}
-	else if (mode == MODE_HOLD_MASS) {
-		float dx = x - held_body->p.x, dy = y - held_body->p.y;
-		held_body->mass = sqrt(dx * dx + dy * dy);
+		if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS) {
+			held_body->v.x = x - held_body->p.x;
+			held_body->v.y = y - held_body->p.y;
+		}
+		else {
+			held_body->p.x = x;
+			held_body->p.y = y;
+			body_trail_reset(held_body);
+		}
 	}
 }
 
 void glfw_scroll(GLFWwindow * window, double dx, double dy) {
-	if (mode == MODE_HOLD || mode == MODE_HOLD_MASS || mode == MODE_HOLD_VELOCITY) {
+	if (mode == MODE_HOLD) {
 		held_body->mass *= 1.0 + (dy / 10.0);
 		body_recalc(held_body);
 	}
@@ -259,8 +280,6 @@ int main(int argc, char * argv[]) {
 
 	double t_last_frame = glfwGetTime();
 
-	galaxy_init(&galaxy, 0, width, height);
-
 	while (!glfwWindowShouldClose(window)) {
 		double t_frame_start = glfwGetTime();
 		double delta = t_frame_start - t_last_frame;
@@ -274,14 +293,15 @@ int main(int argc, char * argv[]) {
 		cairo_set_source_rgba(ctx, 0.0, 0.0, 0.0, 1.0);
 		cairo_paint(ctx);
 		if (flags & FLAG_PATHS) {
-			galaxy_render_trails(ctx_paths, &galaxy);
-			cairo_set_source_surface(ctx, surface_paths, 0.0, 0.0);
-			cairo_paint(ctx);
+			//galaxy_render_trails(ctx_paths, &galaxy);
+			//cairo_set_source_surface(ctx, surface_paths, 0.0, 0.0);
+			//cairo_paint(ctx);
+			galaxy_render_trails(ctx, &galaxy);
 		}
 		galaxy_render(ctx, &galaxy);
 
-		if (mode == MODE_HOLD || mode == MODE_HOLD_VELOCITY || mode == MODE_HOLD_MASS) {
-			float r = fmin(1.0, held_body->r * 1.2), g = fmin(1.0, held_body->g * 1.2), b = fmin(1.0, held_body->b * 1.2);
+		if (mode == MODE_HOLD) {
+			float r = fmax(0, held_body->r * 0.7), g = fmax(0, held_body->g * 0.7), b = fmax(0, held_body->b * 0.7);
 			cairo_set_source_rgba(ctx, r, g, b, 0.95);
 			cairo_arc(ctx, held_body->p.x, held_body->p.y, held_body->radius, 0.0, 2 * PI);
 			cairo_fill(ctx);
