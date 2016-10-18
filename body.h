@@ -7,7 +7,9 @@
 
 #define PI 3.1415962
 
-struct vec2 { float x, y; };
+typedef double coord_t;
+
+struct vec2 { coord_t x, y; };
 
 typedef struct _cairo cairo_t;
 
@@ -15,12 +17,21 @@ enum {
 	BF_SIMULATE = 1,
 	BF_ALLOCATED = 2,
 	BF_TRAIL = 4,
+	BF_EXISTS = 8,
+};
+
+enum {
+	RF_PARTICLE = 0x10,
+	RF_TRAIL = 0x20,
+	RF_VELOCITY = 0x40,
+	RF_GRID = 0x80,
 };
 
 struct body {
 	struct vec2 p;
 	struct vec2 v;
 	float mass;
+
 	int flags;
 
 	float r, g, b;
@@ -33,7 +44,7 @@ struct body {
 	} trail;
 };
 
-void body_init(struct body * b, float mass, float x, float y, float vx, float vy);
+void body_init(struct body * b, float mass, coord_t x, coord_t y, coord_t vx, coord_t vy);
 void body_recalc(struct body * b);
 void body_trail(struct body * body, struct vec2 const* point);
 void body_trail_reset(struct body * body);
@@ -46,11 +57,10 @@ struct galaxy {
 
 #define GALAXY_INIT {NULL, 0}
 
-struct body * galaxy_body_add(struct galaxy * galaxy);
-void galaxy_body_remove(struct galaxy * galaxy, struct body * b);
+size_t galaxy_body_add(struct galaxy * galaxy);
+void galaxy_body_remove(struct galaxy * galaxy, size_t i);
+size_t galaxy_body_get(struct galaxy * galaxy, coord_t x, coord_t y);
 void galaxy_integrate(struct galaxy * galaxy, double delta);
-void galaxy_render(cairo_t * ctx, struct galaxy * galaxy);
-void galaxy_render_trails(cairo_t * ctx, struct galaxy * galaxy);
-struct body * galaxy_body_get(struct galaxy * galaxy, float x, float y);
+void galaxy_render(cairo_t * ctx, struct galaxy * galaxy, unsigned render_flags);
 
 #endif

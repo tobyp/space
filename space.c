@@ -30,38 +30,19 @@
 
 #include "body.h"
 
-/*
-void glfw_window_pos(GLFWwindow *, int, int);
-void glfw_window_size(GLFWwindow *, int, int);
-void glfw_window_close(GLFWwindow *);
-void glfw_window_refresh(GLFWwindow *);
-void glfw_window_focus(GLFWwindow *, int);
-void glfw_window_iconify(GLFWwindow *, int);
-void glfw_mouse_button(GLFWwindow *, int, int, int);
-void glfw_cursor_pos(GLFWwindow *, double, double);
-void glfw_cursor_enter(GLFWwindow *, int);
-void glfw_scroll(GLFWwindow *, double, double);
-void glfw_key(GLFWwindow *, int, int, int, int);
-void glfw_char(GLFWwindow *, unsigned int);
-void glfw_charmods(GLFWwindow *, unsigned int, int);
-void glfw_dropfun(GLFWwindow *, int, const char **);
-void glfw_monitor(GLFWmonitor *, int);
-void glfw_joystick(int, int);*/
-
 int width = 800, height = 600;
 cairo_surface_t * surface;
-cairo_surface_t * surface_paths;
 cairo_t * ctx;
-cairo_t * ctx_paths;
 size_t speed_scale = 1;
 struct galaxy galaxy = GALAXY_INIT;
 
 enum {
-	FLAG_SIMULATE = 1,
-	FLAG_PATHS = 2,
-	FLAG_GRID = 3,
+	FLAG_SIMULATE = 0x1,
+	FLAG_GRID = 0x2,
 };
-int flags;
+
+unsigned flags;
+unsigned render_flags = RF_PARTICLE | RF_TRAIL;
 
 enum {
 	MODE_IDLE,
@@ -69,7 +50,7 @@ enum {
 };
 
 int mode = MODE_IDLE;
-struct body * held_body = NULL;
+size_t held = 0;
 
 double rnd() { return (double)rand() / RAND_MAX; }
 
@@ -80,10 +61,6 @@ void glfw_framebuffer_size(GLFWwindow * window, int w, int h) {
 	width = w;
 	height = h;
 	cairo_gl_surface_set_size(surface, w, h);
-	cairo_destroy(ctx_paths);
-	cairo_surface_destroy(surface_paths);
-	surface_paths = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
-	ctx_paths = cairo_create(surface_paths);
 }
 
 void glfw_key(GLFWwindow * window, int key, int scancode, int action, int mods) {
@@ -103,46 +80,42 @@ void glfw_key(GLFWwindow * window, int key, int scancode, int action, int mods) 
 			if (mode == MODE_IDLE) {
 				double x, y;
 				glfwGetCursorPos(window, &x, &y);
-				held_body = galaxy_body_add(&galaxy);
-				body_init(held_body, 1000.0, x, y, 0, 0);
+				held = galaxy_body_add(&galaxy);
+				body_init(&galaxy.bodies[held], 1000.0, x, y, 0, 0);
+				galaxy.bodies[held].flags &= ~BF_SIMULATE;
 				mode = MODE_HOLD;
 			}
 		}
+		else if (key == GLFW_KEY_P && mods & GLFW_MOD_CONTROL) {
+			for (struct body * b = galaxy.bodies; b < galaxy.bodies + galaxy.bodies_size; ++b) {
+				body_trail_reset(b);
+			}
+		}
 		else if (key == GLFW_KEY_P) {
-			if (mods & GLFW_MOD_CONTROL) {
-				cairo_operator_t op = cairo_get_operator(ctx_paths);
-				cairo_set_operator(ctx_paths, CAIRO_OPERATOR_SOURCE);
-				cairo_set_source_rgba(ctx_paths, 0.0, 0.0, 0.0, 0.0);
-				cairo_paint(ctx_paths);
-				cairo_set_operator(ctx_paths, op);
-			}
-			else {
-				flags ^= FLAG_PATHS;
-			}
+			render_flags ^= RF_TRAIL;
 		}
 		else if (key == GLFW_KEY_R) {
 			size_t n = 1;
-			if (mods & GLFW_MOD_CONTROL) {
-				n *= 10;
-			}
-			if (mode & GLFW_MOD_ALT) {
-				n *= 10;
-			}
+			if (mods & GLFW_MOD_CONTROL) n *= 10;
+			if (mods & GLFW_MOD_ALT) n *= 10;
 			for (size_t i=0; i<n; ++i) {
-				struct body * b = galaxy_body_add(&galaxy);
-				body_init(b, rnd() * 1000.0, rnd() * width, rnd() * height, (rnd() - 0.5) * 2.0, (rnd() - 0.5) * 2.0);
+				size_t i = galaxy_body_add(&galaxy);
+				body_init(&galaxy.bodies[i], rnd() * 1000.0, rnd() * width, rnd() * height, (rnd() - 0.5) * 2.0, (rnd() - 0.5) * 2.0);
 			}
 		}
 		else if (key == GLFW_KEY_T) {
 			if (mode == MODE_HOLD) {
-				held_body->flags ^= BF_TRAIL;
+				galaxy.bodies[held].flags ^= BF_TRAIL;
 			}
 		}
 		else if (key == GLFW_KEY_X) {
 			if (mode == MODE_HOLD) {
-				galaxy_body_remove(&galaxy, held_body);
+				galaxy_body_remove(&galaxy, held);
 				mode = MODE_IDLE;
 			}
+		}
+		else if (key == GLFW_KEY_V) {
+			render_flags ^= RF_VELOCITY;
 		}
 	}
 	else if (action == GLFW_PRESS || action == GLFW_RELEASE) {
@@ -162,19 +135,22 @@ void glfw_mouse_button(GLFWwindow * window, int button, int action, int mods) {
 		if (mode == MODE_IDLE) {
 			double x, y;
 			glfwGetCursorPos(window, &x, &y);
-			held_body = galaxy_body_get(&galaxy, x, y);
-			if (held_body != NULL) {
-				held_body->flags &= ~BF_SIMULATE;
+			held = galaxy_body_get(&galaxy, x, y);
+			if (held == (size_t)-1) {
+				held = galaxy_body_add(&galaxy);
+				body_init(&galaxy.bodies[held], 1000.0, x, y, 0, 0);
 			}
-			else {
-				held_body = galaxy_body_add(&galaxy);
-				body_init(held_body, 1000.0, x, y, 0, 0);
-			}
+			galaxy.bodies[held].flags &= ~BF_SIMULATE;
 			mode = MODE_HOLD;
 		}
 		else if (mode == MODE_HOLD) {
-			held_body->flags |= BF_SIMULATE;
-			held_body = NULL;
+			if (button == GLFW_MOUSE_BUTTON_LEFT) {
+				galaxy.bodies[held].flags |= BF_SIMULATE;
+			}
+			else if (button == GLFW_MOUSE_BUTTON_RIGHT) {
+				galaxy_body_remove(&galaxy, held);
+			}
+			held = (size_t)-1;
 			mode = MODE_IDLE;
 		}
 	}
@@ -183,21 +159,21 @@ void glfw_mouse_button(GLFWwindow * window, int button, int action, int mods) {
 void glfw_cursor_pos(GLFWwindow * window, double x, double y) {
 	if (mode == MODE_HOLD) {
 		if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS) {
-			held_body->v.x = x - held_body->p.x;
-			held_body->v.y = y - held_body->p.y;
+			galaxy.bodies[held].v.x = x - galaxy.bodies[held].p.x;
+			galaxy.bodies[held].v.y = y - galaxy.bodies[held].p.y;
 		}
 		else {
-			held_body->p.x = x;
-			held_body->p.y = y;
-			body_trail_reset(held_body);
+			galaxy.bodies[held].p.x = x;
+			galaxy.bodies[held].p.y = y;
+			body_trail_reset(&galaxy.bodies[held]);
 		}
 	}
 }
 
 void glfw_scroll(GLFWwindow * window, double dx, double dy) {
 	if (mode == MODE_HOLD) {
-		held_body->mass *= 1.0 + (dy / 10.0);
-		body_recalc(held_body);
+		galaxy.bodies[held].mass *= 1.0 + (dy / 10.0);
+		body_recalc(&galaxy.bodies[held]);
 	}
 }
 
@@ -275,9 +251,6 @@ int main(int argc, char * argv[]) {
 
 	ctx = cairo_create(surface);
 
-	surface_paths = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
-	ctx_paths = cairo_create(surface_paths);
-
 	double t_last_frame = glfwGetTime();
 
 	while (!glfwWindowShouldClose(window)) {
@@ -292,25 +265,7 @@ int main(int argc, char * argv[]) {
 
 		cairo_set_source_rgba(ctx, 0.0, 0.0, 0.0, 1.0);
 		cairo_paint(ctx);
-		if (flags & FLAG_PATHS) {
-			//galaxy_render_trails(ctx_paths, &galaxy);
-			//cairo_set_source_surface(ctx, surface_paths, 0.0, 0.0);
-			//cairo_paint(ctx);
-			galaxy_render_trails(ctx, &galaxy);
-		}
-		galaxy_render(ctx, &galaxy);
-
-		if (mode == MODE_HOLD) {
-			float r = fmax(0, held_body->r * 0.7), g = fmax(0, held_body->g * 0.7), b = fmax(0, held_body->b * 0.7);
-			cairo_set_source_rgba(ctx, r, g, b, 0.95);
-			cairo_arc(ctx, held_body->p.x, held_body->p.y, held_body->radius, 0.0, 2 * PI);
-			cairo_fill(ctx);
-
-			cairo_set_source_rgba(ctx, r, g, b, 1.0);
-			cairo_move_to(ctx, held_body->p.x, held_body->p.y);
-			cairo_rel_line_to(ctx, held_body->v.x, held_body->v.y);
-			cairo_stroke(ctx);
-		}
+		galaxy_render(ctx, &galaxy, render_flags);
 
 		if (!(flags & FLAG_SIMULATE)) {
 			//pause symbol
@@ -319,6 +274,22 @@ int main(int argc, char * argv[]) {
 			cairo_fill(ctx);
 			cairo_rectangle(ctx, width - 48 + 18, height - 48, 12, 32);
 			cairo_fill(ctx);
+		}
+		else {
+			cairo_set_source_rgba(ctx, 1.0, 1.0, 1.0, 0.8);
+			cairo_move_to(ctx, width - 48, height - 48);
+			cairo_rel_line_to(ctx, 32, 16);
+			cairo_rel_line_to(ctx, -32, 16);
+			cairo_close_path(ctx);
+			cairo_fill(ctx);
+			if (speed_scale > 1) {
+				cairo_set_source_rgba(ctx, 0.0, 0.0, 0.0, 0.8);
+				cairo_set_font_size(ctx, 16);
+				cairo_move_to(ctx, width - 44, height - 26);
+				char scale_buf[16];
+				snprintf(scale_buf, 16, "%zu", speed_scale);
+				cairo_show_text(ctx, scale_buf);
+			}
 		}
 
 		t_last_frame = t_frame_start;

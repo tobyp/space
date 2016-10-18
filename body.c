@@ -10,12 +10,13 @@
 
 #define TRAIL_SIZE 1024
 
-void body_init(struct body * b, float mass, float x, float y, float vx, float vy) {
+void body_init(struct body * b, float mass, coord_t x, coord_t y, coord_t vx, coord_t vy) {
 	b->p = (struct vec2){x, y};
 	b->v = (struct vec2){vx, vy};
-	b->flags |= BF_SIMULATE | BF_TRAIL;
+	b->flags |= BF_SIMULATE | BF_TRAIL | BF_EXISTS;
 	b->mass = mass;
 	b->trail.points = malloc(TRAIL_SIZE * sizeof(struct vec2));
+	if (b->trail.points == NULL) abort();
 	b->trail.points[0] = b->p;
 	b->trail.size = TRAIL_SIZE;
 	b->trail.start = 0;
@@ -30,11 +31,13 @@ void body_recalc(struct body * b) {
 	b->radius = 1.0 + log(E + b->mass/250.0);
 }
 
+#include <stdio.h>
+
 void body_trail(struct body * body, struct vec2 const* point) {
-	body->trail.start = (body->trail.start + 1) % body->trail.size;
-	body->trail.points[body->trail.start] = *point;
+	body->trail.points[body->trail.end] = *point;
+	body->trail.end = (body->trail.end + 1) % body->trail.size;
 	if (body->trail.start == body->trail.end) {
-		body->trail.end = (body->trail.end + 1) % body->trail.size;
+		body->trail.start = (body->trail.start + 1) % body->trail.size;
 	}
 }
 
@@ -55,25 +58,42 @@ void body_merge(struct body * b1, struct body * b2) {
 	b1->p.y = py;
 	b1->v.x = vx;
 	b1->v.y = vy;
-	b2->flags = 0;
+	b2->flags &= BF_ALLOCATED | BF_TRAIL;
+	body_trail(b2, &b1->p);
 	body_recalc(b1);
 }
 
-struct body * galaxy_body_add(struct galaxy * galaxy) {
-	for (struct body * b = galaxy->bodies; b < galaxy->bodies + galaxy->bodies_size; ++b) {
+size_t galaxy_body_add(struct galaxy * galaxy) {
+	for (size_t i=0; i<galaxy->bodies_size; ++i) {
+		struct body * b = &galaxy->bodies[i];
 		if (!(b->flags & BF_ALLOCATED)) {
 			b->flags = BF_ALLOCATED;
-			return b;
+			return i;
 		}
 	}
 	size_t new_size = galaxy->bodies_size + 1;
 	galaxy->bodies = (struct body *)realloc(galaxy->bodies, new_size * sizeof(struct body));
+	if (galaxy->bodies == NULL) abort();
 	galaxy->bodies[galaxy->bodies_size].flags = BF_ALLOCATED;
-	return &galaxy->bodies[galaxy->bodies_size++];
+	return galaxy->bodies_size++;
 }
 
-void galaxy_body_remove(struct galaxy * galaxy, struct body * b) {
-	b->flags = 0;
+void galaxy_body_remove(struct galaxy * galaxy, size_t i) {
+	galaxy->bodies[i].flags = BF_ALLOCATED;
+}
+
+size_t galaxy_body_get(struct galaxy * galaxy, coord_t x, coord_t y) {
+	for (size_t i=0; i<galaxy->bodies_size; ++i) {
+		struct body * b = &galaxy->bodies[i];
+		if (b->flags & BF_ALLOCATED) {
+			coord_t dx = fabs(b->p.x - x);
+			if (dx > b->radius) continue;
+			coord_t dy = fabs(b->p.y - y);
+			if (dy > b->radius) continue;
+			if (sqrt(dx * dx + dy * dy) <= b->radius) return i;
+		}
+	}
+	return (size_t)-1;
 }
 
 void galaxy_integrate(struct galaxy * galaxy, double delta) {
@@ -81,23 +101,23 @@ void galaxy_integrate(struct galaxy * galaxy, double delta) {
 		struct body * b1 = &galaxy->bodies[i];
 		if (!(b1->flags & BF_SIMULATE)) continue;
 
-		double ax = 0.0, ay = 0.0;
+		coord_t ax = 0.0, ay = 0.0;
 		for (size_t j=0; j<galaxy->bodies_size; ++j) {
 			if (i == j) continue;
 			struct body * b2 = &galaxy->bodies[j];
 			if (!(b2->flags & BF_SIMULATE)) continue;
 
-			double dx = b2->p.x - b1->p.x;
-			double dy = b2->p.y - b1->p.y;
-			double dsquared = dx * dx + dy * dy;
-			double d = sqrt(dx * dx + dy * dy);
+			coord_t dx = b2->p.x - b1->p.x;
+			coord_t dy = b2->p.y - b1->p.y;
+			coord_t dsquared = dx * dx + dy * dy;
+			coord_t d = sqrt(dx * dx + dy * dy);
 
 			if (d < b1->radius/1.75 + b2->radius/1.75) {
 				body_merge(b1, b2);
 				b2->flags &= ~BF_SIMULATE;
 			}
 
-			double a = GRAV * b2->mass / dsquared;
+			coord_t a = GRAV * b2->mass / dsquared;
 			ax += a * dx / d;
 			ay += a * dy / d;
 		}
@@ -107,49 +127,39 @@ void galaxy_integrate(struct galaxy * galaxy, double delta) {
 		b1->p.x += b1->v.x * delta;
 		b1->p.y += b1->v.y * delta;
 
-		body_trail(b1, &b1->p);
-	}
-}
-
-void galaxy_render(cairo_t * ctx, struct galaxy * galaxy) {
-	for (size_t i=0; i<galaxy->bodies_size; ++i) {
-		struct body * b = &galaxy->bodies[i];
-		if (b->flags & BF_SIMULATE) {
-			cairo_set_source_rgba(ctx, b->r, b->g, b->b, 0.95);
-			cairo_arc(ctx, b->p.x, b->p.y, b->radius, 0.0, 2.0 * PI);
-			cairo_fill(ctx);
-		}
-	}
-}
-
-#include <stdio.h>
-
-void galaxy_render_trails(cairo_t * ctx, struct galaxy * galaxy) {
-	for (size_t i=0; i<galaxy->bodies_size; ++i) {
-		struct body * b = &galaxy->bodies[i];
-		if (b->flags & BF_SIMULATE) {
-			if (b->flags & BF_TRAIL) {
-				cairo_set_source_rgba(ctx, b->r, b->g, b->b, 0.85);
-				cairo_move_to(ctx, b->trail.points[b->trail.start].x, b->trail.points[b->trail.start].y);
-				for (size_t i=(b->trail.start + 1) % b->trail.size; (b->trail.start >= b->trail.end) ? (i >= b->trail.start || i < b->trail.end) : (i >= b->trail.start && i < b->trail.end); i = (i + 1) % b->trail.size) {
-					cairo_line_to(ctx, b->trail.points[i].x, b->trail.points[i].y);
-					cairo_stroke(ctx);
-				}
+		if (b1->flags & BF_TRAIL) {
+			struct vec2 * old_end = &b1->trail.points[(b1->trail.end - 1) % b1->trail.size];
+			if (fabs(old_end->x - b1->p.x) > 2 || fabs(old_end->y - b1->p.y) > 2) {
+				body_trail(b1, &b1->p);
 			}
 		}
 	}
 }
 
-struct body * galaxy_body_get(struct galaxy * galaxy, float x, float y) {
-	for (size_t i=0; i<galaxy->bodies_size; ++i) {
-		struct body * b = &galaxy->bodies[i];
-		if (b->flags & BF_ALLOCATED) {
-			float dx = fabs(b->p.x - x);
-			if (dx > b->radius) continue;
-			float dy = fabs(b->p.y - y);
-			if (dy > b->radius) continue;
-			if (sqrt(dx * dx + dy * dy) <= b->radius) return b;
+void galaxy_render(cairo_t * ctx, struct galaxy * galaxy, unsigned render_flags) {
+	for (struct body * b = galaxy->bodies; b < galaxy->bodies + galaxy->bodies_size; ++b) {
+		if (!(b->flags & BF_ALLOCATED)) continue;
+
+		if (b->flags & BF_EXISTS) {
+			if (render_flags & RF_PARTICLE) {
+				cairo_set_source_rgba(ctx, b->r, b->g, b->b, 0.9);
+				cairo_arc(ctx, b->p.x, b->p.y, b->radius, 0.0, 2.0 * PI);
+				cairo_fill(ctx);
+			}
+			if (render_flags & RF_VELOCITY) {
+				cairo_set_source_rgba(ctx, b->r, b->g, b->b, 1.0);
+				cairo_move_to(ctx, b->p.x, b->p.y);
+				cairo_rel_line_to(ctx, b->v.x, b->v.y);
+				cairo_stroke(ctx);
+			}
+		}
+		if (render_flags & RF_TRAIL) {
+			cairo_new_path(ctx);
+			cairo_set_source_rgba(ctx, b->r, b->g, b->b, 0.8);
+			for (size_t i=b->trail.start; (b->trail.start < b->trail.end) ? (i >= b->trail.start && i < b->trail.end) : (i >= b->trail.start || i < b->trail.end); i = (i + 1) % b->trail.size) {
+				cairo_line_to(ctx, b->trail.points[i].x, b->trail.points[i].y);
+			}
+			cairo_stroke(ctx);
 		}
 	}
-	return NULL;
 }
