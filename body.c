@@ -159,6 +159,7 @@ void galaxy_render(cairo_t * ctx, struct galaxy * galaxy, unsigned render_flags)
 			for (size_t i=b->trail.start; (b->trail.start < b->trail.end) ? (i >= b->trail.start && i < b->trail.end) : (i >= b->trail.start || i < b->trail.end); i = (i + 1) % b->trail.size) {
 				cairo_line_to(ctx, b->trail.points[i].x, b->trail.points[i].y);
 			}
+			cairo_line_to(ctx, b->p.x, b->p.y);
 			cairo_stroke(ctx);
 		}
 	}
@@ -188,11 +189,27 @@ coord_t dbounce(coord_t x, coord_t w) {
 	}
 }
 
+coord_t wrap(coord_t x, coord_t d) {
+	coord_t fits = floor(x / d);
+	return x - (fits * d);
+}
+
 void galaxy_bounce(struct galaxy * galaxy, coord_t x0, coord_t y0, coord_t x1, coord_t y1) {
 	coord_t w = x1 - x0;
 	coord_t h = y1 - y0;
 	for (struct body * b = galaxy->bodies; b < galaxy->bodies + galaxy->bodies_size; ++b) {
+		b->v.x *= dbounce(b->v.x, w);
+		b->v.y *= dbounce(b->v.y, h);
 		b->p.x = x0 + bounce(b->p.x - x0, w);
 		b->p.y = y0 + bounce(b->p.y - y0, h);
+	}
+}
+
+void galaxy_wrap(struct galaxy * galaxy, coord_t x0, coord_t x1, coord_t y0, coord_t y1) {
+	coord_t w = x1 - x0;
+	coord_t h = y1 - y0;
+	for (struct body * b = galaxy->bodies; b < galaxy->bodies + galaxy->bodies_size; ++b) {
+		b->p.x = x0 + wrap(b->p.x - x0, w);
+		b->p.y = y0 + wrap(b->p.y - y0, h);
 	}
 }

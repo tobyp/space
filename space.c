@@ -29,7 +29,10 @@
 
 #include "body.h"
 
-int width = 800, height = 600;
+#define WIDTH 800.0
+#define HEIGHT 600.0
+
+int width = WIDTH, height = HEIGHT;
 cairo_surface_t * surface;
 cairo_t * ctx;
 size_t speed_scale = 1;
@@ -47,12 +50,37 @@ unsigned render_flags = RF_PARTICLE | RF_TRAIL;
 enum {
 	MODE_IDLE,
 	MODE_HOLD,
+	MODE_PAN,
 };
 
 int mode = MODE_IDLE;
 size_t held = 0;
 
+cairo_matrix_t transform = {.xx=1, .yy=1, .x0=-WIDTH/2.0, .y0=-HEIGHT/2.0}; 
+
 double rnd() { return (double)rand() / RAND_MAX; }
+
+void scale(double f) {
+	cairo_matrix_t tfm;
+	cairo_matrix_init_scale(&tfm, f, f);
+	cairo_matrix_multiply(&transform, &transform, &tfm);
+}
+
+void rotate(double phi) {
+	cairo_matrix_t tfm;
+	cairo_matrix_init_rotate(&tfm, phi);
+	cairo_matrix_multiply(&transform, &transform, &tfm);
+}
+
+void pan(double dx, double dy) {
+	cairo_matrix_t tfm;
+	cairo_matrix_init_translate(&tfm, dx, dy);
+	cairo_matrix_multiply(&transform, &transform, &tfm);
+}
+
+void screen_to_view(double * x, double * y) {
+
+}
 
 static void gl_debug_message(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, GLchar const* message, void const* userParam);
 static void glfw_error(int error, char const* message);
@@ -93,7 +121,10 @@ void glfw_key(GLFWwindow * window, int key, int scancode, int action, int mods) 
 			if (mods & GLFW_MOD_ALT) n *= 10;
 			for (size_t i=0; i<n; ++i) {
 				size_t i = galaxy_body_add(&galaxy);
-				body_init(&galaxy.bodies[i], rnd() * 1000.0, rnd() * width, rnd() * height, (rnd() - 0.5) * 2.0, (rnd() - 0.5) * 2.0);
+				double x = rnd() * width;
+				double y = rnd() * height;
+				cairo_device_to_user(ctx, &x, &y);
+				body_init(&galaxy.bodies[i], rnd() * 1000.0, x, y, (rnd() - 0.5) * 2.0, (rnd() - 0.5) * 2.0);
 			}
 		}
 		else if (key == GLFW_KEY_T) {
@@ -123,11 +154,14 @@ void glfw_key(GLFWwindow * window, int key, int scancode, int action, int mods) 
 	}
 }
 
+double pan_start_x, pan_start_y;
+
 void glfw_mouse_button(GLFWwindow * window, int button, int action, int mods) {
 	if (action == GLFW_RELEASE) {
 		if (mode == MODE_IDLE) {
 			double x, y;
 			glfwGetCursorPos(window, &x, &y);
+			cairo_device_to_user(ctx, &x, &y);
 			held = galaxy_body_get(&galaxy, x, y);
 			if (held == (size_t)-1) {
 				held = galaxy_body_add(&galaxy);
@@ -146,11 +180,23 @@ void glfw_mouse_button(GLFWwindow * window, int button, int action, int mods) {
 			held = (size_t)-1;
 			mode = MODE_IDLE;
 		}
+		else if (mode == MODE_PAN) {
+			mode = MODE_IDLE;
+		}
+	}
+	else if (action == GLFW_PRESS) {
+		if (mode == MODE_IDLE) {
+			if (button == GLFW_MOUSE_BUTTON_MIDDLE) {
+				mode = MODE_PAN;
+				glfwGetCursorPos(window, &pan_start_x, &pan_start_y);
+			}
+		}
 	}
 }
 
 void glfw_cursor_pos(GLFWwindow * window, double x, double y) {
 	if (mode == MODE_HOLD) {
+		cairo_device_to_user(ctx, &x, &y);
 		if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS) {
 			galaxy.bodies[held].v.x = x - galaxy.bodies[held].p.x;
 			galaxy.bodies[held].v.y = y - galaxy.bodies[held].p.y;
@@ -161,6 +207,10 @@ void glfw_cursor_pos(GLFWwindow * window, double x, double y) {
 			body_trail_reset(&galaxy.bodies[held]);
 		}
 	}
+	else if (mode == MODE_PAN) {
+		pan(x - pan_start_x, y - pan_start_y);
+		pan_start_x = x; pan_start_y = y;
+	}
 }
 
 void glfw_scroll(GLFWwindow * window, double dx, double dy) {
@@ -168,11 +218,15 @@ void glfw_scroll(GLFWwindow * window, double dx, double dy) {
 		galaxy.bodies[held].mass *= 1.0 + (dy / 10.0);
 		body_recalc(&galaxy.bodies[held]);
 	}
+	else if (mode == MODE_IDLE) {
+		if (glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS) {
+			rotate(dy / 20.0);
+		}
+		else {
+			scale(1.0 + (dy / 10.0));
+		}
+	}
 }
-
-size_t integrate(struct galaxy * galaxy, double delta);
-void render(cairo_t * ctx, struct galaxy * galaxy);
-void render_paths(cairo_t * ctx, struct galaxy * galaxy);
 
 int main(int argc, char * argv[]) {
 	glfwSetErrorCallback(&glfw_error);
@@ -259,12 +313,17 @@ int main(int argc, char * argv[]) {
 			}
 		}
 
+		cairo_set_matrix(ctx, &transform);
+		double center_x = width / 2.0, center_y = height / 2.0;
+		cairo_device_to_user_distance(ctx, &center_x, &center_y);
+		cairo_translate(ctx, center_x, center_y);
 		cairo_set_source_rgba(ctx, 0.0, 0.0, 0.0, 1.0);
 		cairo_paint(ctx);
 		galaxy_render(ctx, &galaxy, render_flags);
 
+		cairo_save(ctx);
+		cairo_identity_matrix(ctx);
 		if (!(flags & FLAG_SIMULATE)) {
-			//pause symbol
 			cairo_set_source_rgba(ctx, 1.0, 1.0, 1.0, 0.8);
 			cairo_rectangle(ctx, width - 48, height - 48, 12, 32);
 			cairo_fill(ctx);
@@ -287,6 +346,7 @@ int main(int argc, char * argv[]) {
 				cairo_show_text(ctx, scale_buf);
 			}
 		}
+		cairo_restore(ctx);
 
 		t_last_frame = t_frame_start;
 		double t_frame_end = glfwGetTime();
