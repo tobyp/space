@@ -24,7 +24,6 @@
 
 #include <GLFW/glfw3native.h>
 
-
 #include <cairo/cairo.h>
 #include <cairo/cairo-gl.h>
 
@@ -39,9 +38,10 @@ struct galaxy galaxy = GALAXY_INIT;
 enum {
 	FLAG_SIMULATE = 0x1,
 	FLAG_GRID = 0x2,
+	FLAG_BOUNCE = 0x4,
 };
 
-unsigned flags;
+unsigned flags = 0;
 unsigned render_flags = RF_PARTICLE | RF_TRAIL;
 
 enum {
@@ -76,15 +76,8 @@ void glfw_key(GLFWwindow * window, int key, int scancode, int action, int mods) 
 		else if (key == GLFW_KEY_SPACE) {
 			flags ^= FLAG_SIMULATE;
 		}
-		else if (key == GLFW_KEY_C) {
-			if (mode == MODE_IDLE) {
-				double x, y;
-				glfwGetCursorPos(window, &x, &y);
-				held = galaxy_body_add(&galaxy);
-				body_init(&galaxy.bodies[held], 1000.0, x, y, 0, 0);
-				galaxy.bodies[held].flags &= ~BF_SIMULATE;
-				mode = MODE_HOLD;
-			}
+		else if (key == GLFW_KEY_B) {
+			flags ^= FLAG_BOUNCE;
 		}
 		else if (key == GLFW_KEY_P && mods & GLFW_MOD_CONTROL) {
 			for (struct body * b = galaxy.bodies; b < galaxy.bodies + galaxy.bodies_size; ++b) {
@@ -260,6 +253,9 @@ int main(int argc, char * argv[]) {
 		if (flags & FLAG_SIMULATE) {
 			for (size_t i=0; i<speed_scale; ++i) {
 				galaxy_integrate(&galaxy, delta);
+				if (flags & FLAG_BOUNCE) {
+					galaxy_bounce(&galaxy, 0, 0, width, height);
+				}
 			}
 		}
 

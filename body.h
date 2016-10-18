@@ -61,6 +61,7 @@ size_t galaxy_body_add(struct galaxy * galaxy);
 void galaxy_body_remove(struct galaxy * galaxy, size_t i);
 size_t galaxy_body_get(struct galaxy * galaxy, coord_t x, coord_t y);
 void galaxy_integrate(struct galaxy * galaxy, double delta);
+void galaxy_bounce(struct galaxy * galaxy, coord_t x0, coord_t x1, coord_t y0, coord_t y1);
 void galaxy_render(cairo_t * ctx, struct galaxy * galaxy, unsigned render_flags);
 
 #endif

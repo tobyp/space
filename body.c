@@ -163,3 +163,36 @@ void galaxy_render(cairo_t * ctx, struct galaxy * galaxy, unsigned render_flags)
 		}
 	}
 }
+
+coord_t bounce(coord_t x, coord_t w) {
+	coord_t fits = floor(x/w);
+	coord_t rem = x - (fits * w);
+	coord_t new_x = rem;
+	int ifits = (int)fmod(fits, 2);
+	if (ifits) {
+		return w - new_x;
+	}
+	else {
+		return new_x;
+	}
+}
+
+coord_t dbounce(coord_t x, coord_t w) {
+	coord_t fits = floor(x/w);
+	int ifits = (int)fmod(fits, 2);
+	if (ifits) {
+		return -1.0;
+	}
+	else {
+		return 1.0;
+	}
+}
+
+void galaxy_bounce(struct galaxy * galaxy, coord_t x0, coord_t y0, coord_t x1, coord_t y1) {
+	coord_t w = x1 - x0;
+	coord_t h = y1 - y0;
+	for (struct body * b = galaxy->bodies; b < galaxy->bodies + galaxy->bodies_size; ++b) {
+		b->p.x = x0 + bounce(b->p.x - x0, w);
+		b->p.y = y0 + bounce(b->p.y - y0, h);
+	}
+}
