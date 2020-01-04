@@ -32,7 +32,7 @@ struct body {
 	struct vec2 v;
 	float mass;
 
-	int flags;
+	unsigned flags;
 
 	float r, g, b;
 	float radius;

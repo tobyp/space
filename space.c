@@ -18,7 +18,7 @@ struct ui {
 	int width, height;
 	size_t speed_scale;
 	struct galaxy galaxy;
-	unsigned flags;
+	unsigned simulation_flags;
 	unsigned render_flags;
 	int mode;
 	size_t held;
@@ -83,10 +83,10 @@ static void glfw_key_callback(GLFWwindow * window, int key, int scancode, int ac
 			}
 		}
 		else if (key == GLFW_KEY_SPACE) {
-			ui->flags ^= FLAG_SIMULATE;
+			ui->simulation_flags ^= FLAG_SIMULATE;
 		}
 		else if (key == GLFW_KEY_B) {
-			ui->flags ^= FLAG_BOUNCE;
+			ui->simulation_flags ^= FLAG_BOUNCE;
 		}
 		else if (key == GLFW_KEY_P && mods & GLFW_MOD_CONTROL) {
 			for (struct body * b = ui->galaxy.bodies; b < ui->galaxy.bodies + ui->galaxy.bodies_size; ++b) {
@@ -109,6 +109,7 @@ static void glfw_key_callback(GLFWwindow * window, int key, int scancode, int ac
 			}
 		}
 		else if (key == GLFW_KEY_T) {
+
 			if (ui->mode == MODE_HOLD) {
 				ui->galaxy.bodies[ui->held].flags ^= BF_TRAIL;
 			}
@@ -125,12 +126,12 @@ static void glfw_key_callback(GLFWwindow * window, int key, int scancode, int ac
 	}
 	else if (action == GLFW_PRESS || action == GLFW_RELEASE) {
 		if (key == GLFW_KEY_UP) {
-			if (!(ui->flags & FLAG_SIMULATE)) ui->flags |= FLAG_SIMULATE;
+			if (!(ui->simulation_flags & FLAG_SIMULATE)) ui->simulation_flags |= FLAG_SIMULATE;
 			else ui->speed_scale++;
 		}
 		else if (key == GLFW_KEY_DOWN) {
 			if (ui->speed_scale > 1) ui->speed_scale--;
-			else if (ui->speed_scale == 1) ui->flags &= ~FLAG_SIMULATE;
+			else if (ui->speed_scale == 1) ui->simulation_flags &= ~FLAG_SIMULATE;
 		}
 	}
 }
@@ -214,7 +215,7 @@ int ui_init(struct ui * ui, int width, int height) {
 	ui->mode = MODE_IDLE;
 	ui->held = 0;
 	ui->galaxy = (struct galaxy)GALAXY_INIT;
-	ui->flags = 0;
+	ui->simulation_flags = 0;
 	ui->speed_scale = 1;
 	ui->render_flags = RF_PARTICLE | RF_TRAIL;
 	ui->transform = (cairo_matrix_t){.xx=1, .yy=1, .x0=-width/2.0, .y0=-height/2.0};
@@ -272,10 +273,10 @@ int main(int argc, char * argv[]) {
 		double t_frame_start = glfwGetTime();
 		double delta = t_frame_start - t_last_frame;
 
-		if (ui.flags & FLAG_SIMULATE) {
+		if (ui.simulation_flags & FLAG_SIMULATE) {
 			for (size_t i=0; i<ui.speed_scale; ++i) {
 				galaxy_integrate(&ui.galaxy, delta);
-				if (ui.flags & FLAG_BOUNCE) {
+				if (ui.simulation_flags & FLAG_BOUNCE) {
 					galaxy_bounce(&ui.galaxy, 0, 0, ui.width, ui.height);
 				}
 			}
@@ -300,7 +301,7 @@ int main(int argc, char * argv[]) {
 
 		// UI
 		cairo_identity_matrix(ui.ctx);
-		if (!(ui.flags & FLAG_SIMULATE)) {
+		if (!(ui.simulation_flags & FLAG_SIMULATE)) {
 			cairo_set_source_rgba(ui.ctx, 1.0, 1.0, 1.0, 0.8);
 			cairo_rectangle(ui.ctx, ui.width - 48, ui.height - 48, 12, 32);
 			cairo_fill(ui.ctx);
@@ -325,7 +326,7 @@ int main(int argc, char * argv[]) {
 		}
 
 		t_last_frame = t_frame_start;
-		double t_frame_end = glfwGetTime();
+		//double t_frame_end = glfwGetTime();
 		//fprintf(stderr, "frame time %lf s | rate %lf Hz\n", t_frame_end - t_frame_start, 1.0 / delta);
 
 		cairo_pop_group_to_source(ui.ctx);
